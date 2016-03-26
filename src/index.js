@@ -1,4 +1,3 @@
-import template from 'lodash.template';
 import spawn from './spawn-promise';
 import asar from 'asar';
 import path from 'path';
@@ -121,22 +120,39 @@ export async function createWindowsInstaller(options) {
     }
   }
 
-  metadata.owners = metadata.owners || metadata.authors;
-  metadata.version = convertVersion(metadata.version);
-  metadata.copyright = metadata.copyright ||
+  const copyright = metadata.copyright ||
     `Copyright © ${new Date().getFullYear()} ${metadata.authors || metadata.owners}`;
 
-  let templateData = await fsUtils.readFile(path.join(__dirname, '..', 'template.nuspec'), 'utf8');
-  if (path.sep === '/') {
-    templateData = templateData.replace(/\\/g, '/');
-  }
-  const nuspecContent = template(templateData)(metadata);
-
-  log(`Created NuSpec file:\n${nuspecContent}`);
+  const nuspecContent = `<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
+  <metadata>
+    <id>${metadata.name}</id>
+    <title>${metadata.title}</title>
+    <version>${convertVersion(metadata.version)}</version>
+    <authors>${metadata.authors || metadata.owners}</authors>
+    <owners>${metadata.owners || metadata.authors}</owners>
+    <iconUrl>${metadata.iconUrl}</iconUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>${metadata}</description>
+    <copyright>${copyright}</copyright>
+  </metadata>
+  <files>
+    <file src="locales${path.sep}**" target="lib\\net45\\locales" />
+    <file src="resources${path.sep}**" target="lib\\net45\\resources" />
+    <file src="*.bin" target="lib\\net45" />
+    <file src="*.dll" target="lib\\net45" />
+    <file src="*.pak" target="lib\\net45" />
+    <file src="Update.exe" target="lib\\net45\\squirrel.exe" />
+    <file src="icudtl.dat" target="lib\\net45\\icudtl.dat" />
+    <file src="LICENSE" target="lib\\net45\\LICENSE" />
+    <file src="${metadata.exe}" target="lib\\net45\\${metadata.exe}" />${metadata.extraFileSpecs || ''}
+  </files>
+</package>`;
+  d(`Created NuSpec file:\n${nuspecContent}`);
 
   const nugetOutput = await fsUtils.createTempDir('si-');
   const targetNuspecPath = path.join(nugetOutput, metadata.name + '.nuspec');
-
+  
   await fsUtils.writeFile(targetNuspecPath, nuspecContent);
 
   let cmd = path.join(vendorPath, 'nuget.exe');
