@@ -148,11 +148,11 @@ export async function createWindowsInstaller(options) {
     <file src="${metadata.exe}" target="lib\\net45\\${metadata.exe}" />${metadata.extraFileSpecs || ''}
   </files>
 </package>`;
-  d(`Created NuSpec file:\n${nuspecContent}`);
+  log(`Created NuSpec file:\n${nuspecContent}`);
 
   const nugetOutput = await fsUtils.createTempDir('si-');
   const targetNuspecPath = path.join(nugetOutput, metadata.name + '.nuspec');
-  
+
   await fsUtils.writeFile(targetNuspecPath, nuspecContent);
 
   let cmd = path.join(vendorPath, 'nuget.exe');
@@ -160,7 +160,9 @@ export async function createWindowsInstaller(options) {
     'pack', targetNuspecPath,
     '-BasePath', appDirectory,
     '-OutputDirectory', nugetOutput,
-    '-NoDefaultExcludes'
+    '-NoDefaultExcludes',
+    '-NonInteractive',
+    '-Verbosity', log.enabled ? 'detailed' : 'quiet'
   ];
 
   if (useMono) {
@@ -169,7 +171,7 @@ export async function createWindowsInstaller(options) {
   }
 
   // Call NuGet to create our package
-  log(await spawn(cmd, args));
+  await spawn(cmd, args);
   const nupkgPath = path.join(nugetOutput, `${metadata.name}.${metadata.version}.nupkg`);
 
   if (remoteReleases) {
@@ -185,7 +187,7 @@ export async function createWindowsInstaller(options) {
       args.push('-t', remoteToken);
     }
 
-    log(await spawn(cmd, args));
+    await spawn(cmd, args);
   }
 
   cmd = path.join(vendorPath, 'Update.com');
@@ -217,7 +219,7 @@ export async function createWindowsInstaller(options) {
     args.push('--no-msi');
   }
 
-  log(await spawn(cmd, args));
+  await spawn(cmd, args);
 
   if (options.fixUpPaths !== false) {
     log('Fixing up paths');
