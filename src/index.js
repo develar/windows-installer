@@ -133,8 +133,8 @@ export async function createWindowsInstaller(options) {
     <owners>${metadata.owners || metadata.authors}</owners>
     <iconUrl>${metadata.iconUrl}</iconUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <description>${metadata}</description>
-    <copyright>${copyright}</copyright>
+    <description>${metadata.description}</description>
+    <copyright>${copyright}</copyright>${metadata.extraMetadataSpecs || ''}
   </metadata>
   <files>
     <file src="locales${path.sep}**" target="lib\\net45\\locales" />
