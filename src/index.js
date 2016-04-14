@@ -5,34 +5,6 @@ import * as fsUtils from './fs-utils';
 
 const log = require('debug')('electron-windows-installer:main');
 
-async function locateExecutableInPath(exe) {
-  // NB: Windows won't search PATH looking for executables in spawn like
-  // Posix does
-
-  // Files with any directory path don't get this applied
-  if (exe.match(/[\\\/]/)) {
-    log('Path has slash in directory, bailing');
-    return exe;
-  }
-
-  const target = path.join('.', exe);
-  if (await fsUtils.fileExists(target)) {
-    log(`Found executable in currect directory: ${target}`);
-    return target;
-  }
-
-  const haystack = process.env.PATH.split(path.delimiter);
-  for (let p of haystack) {
-    const needle = path.join(p, exe);
-    if (await fsUtils.fileExists(needle)) {
-      return needle;
-    }
-  }
-
-  log('Failed to find executable anywhere in path');
-  return null;
-}
-
 export function convertVersion(version) {
   const parts = version.split('-');
   const mainVersion = parts.shift();
@@ -45,27 +17,14 @@ export function convertVersion(version) {
 }
 
 export async function createWindowsInstaller(options) {
-  let useMono = false;
-
-  const monoExe = await locateExecutableInPath('mono');
-  const wineExe = await locateExecutableInPath('wine');
-
-  if (process.platform !== 'win32') {
-    useMono = true;
-    if (!wineExe || !monoExe) {
-      throw new Error('You must install both Mono and Wine on non-Windows');
-    }
-
-    log(`Using Mono: '${monoExe}'`);
-    log(`Using Wine: '${wineExe}'`);
-  }
-
   let { appDirectory, outputDirectory, loadingGif } = options;
   outputDirectory = path.resolve(outputDirectory || 'installer');
 
   const vendorPath = path.join(__dirname, '..', 'vendor');
   const vendorUpdate = path.join(vendorPath, 'Update.exe');
   const appUpdate = path.join(appDirectory, 'Update.exe');
+
+  const useMono = process.platform !== 'win32';
 
   await fsUtils.copy(vendorUpdate, appUpdate);
   if (options.setupIcon && (options.skipUpdateIcon !== true)) {
@@ -77,7 +36,7 @@ export async function createWindowsInstaller(options) {
 
     if (useMono) {
       args.unshift(cmd);
-      cmd = wineExe;
+      cmd = 'wine';
     }
 
     await spawn(cmd, args);
@@ -155,6 +114,7 @@ export async function createWindowsInstaller(options) {
 
   await fsUtils.writeFile(targetNuspecPath, nuspecContent);
 
+  const monoExe = 'mono';
   let cmd = path.join(vendorPath, 'nuget.exe');
   let args = [
     'pack', targetNuspecPath,
