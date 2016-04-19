@@ -17,6 +17,21 @@ export function convertVersion(version) {
 }
 
 export async function createWindowsInstaller(options) {
+  let useMono = false;
+
+  const monoExe = 'mono';
+  const wineExe = 'wine';
+
+  if (process.platform !== 'win32') {
+    useMono = true;
+    if (!wineExe || !monoExe) {
+      throw new Error('You must install both Mono and Wine on non-Windows');
+    }
+
+    log(`Using Mono: '${monoExe}'`);
+    log(`Using Wine: '${wineExe}'`);
+  }
+
   let { appDirectory, outputDirectory, loadingGif } = options;
   outputDirectory = path.resolve(outputDirectory || 'installer');
 
@@ -114,7 +129,6 @@ export async function createWindowsInstaller(options) {
 
   await fsUtils.writeFile(targetNuspecPath, nuspecContent);
 
-  const monoExe = 'mono';
   let cmd = path.join(vendorPath, 'nuget.exe');
   let args = [
     'pack', targetNuspecPath,
