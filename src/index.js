@@ -5,8 +5,10 @@ import * as fsUtils from './fs-utils';
 import archiver from 'archiver';
 import * as fs from 'fs-extra';
 import { Promise } from 'bluebird';
+import { sign as signCallback } from 'signcode';
 
 const log = require('debug')('electron-windows-installer');
+const sign = Promise.promisify(signCallback);
 
 export function convertVersion(version) {
   const parts = version.split('-');
@@ -103,12 +105,24 @@ export async function createWindowsInstaller(options) {
     await fsUtils.remove(squirrelWorkaroundDir);
   }
 
+  const unfixedSetupPath = path.join(outputDirectory, 'Setup.exe');
+  if (process.platform === 'darwin' && options.certificateFile && options.certificatePassword) {
+    await sign(Object.assign({
+      cert: options.certificateFile,
+      password: options.certificatePassword,
+      hash: ['sha256'],
+      name: metadata.title,
+      overwrite: true
+    }, options.sign, {
+      path: unfixedSetupPath
+    }));
+  }
+
   if (options.fixUpPaths !== false) {
     log('Fixing up paths');
 
     if (metadata.productName || options.setupExe) {
       const setupPath = path.join(outputDirectory, options.setupExe || `${metadata.productName}Setup.exe`);
-      const unfixedSetupPath = path.join(outputDirectory, 'Setup.exe');
       log(`Renaming ${unfixedSetupPath} => ${setupPath}`);
       await fsUtils.rename(unfixedSetupPath, setupPath);
     }
@@ -194,25 +208,28 @@ function pack(metadata, appDirectory, outFile) {
 }
 
 async function releasify(nupkgPath, outputDirectory, options, vendorPath) {
-  let cmd = path.join(vendorPath, 'Update.com');
+  const isWindows = process.platform === 'win32';
+  const cmd = isWindows ? path.join(vendorPath, 'Update.com') : 'mono';
   const args = [
     '--releasify', nupkgPath,
     '--releaseDir', outputDirectory,
     '--loadingGif', options.loadingGif ? path.resolve(options.loadingGif) : path.join(__dirname, '..', 'resources', 'install-spinner.gif')
   ];
 
-  if (process.platform !== 'win32') {
+  if (!isWindows) {
     args.unshift(path.join(vendorPath, 'Update-Mono.exe'));
-    cmd = 'mono';
   }
 
   const {certificateFile, certificatePassword, signWithParams} = options;
-  if (signWithParams) {
-    args.push('--signWithParams');
-    args.push(signWithParams);
-  } else if (certificateFile && certificatePassword) {
-    args.push('--signWithParams');
-    args.push(`/a /f "${path.resolve(certificateFile)}" /p "${certificatePassword}"`);
+  if (isWindows) {
+    if (signWithParams) {
+      args.push('--signWithParams');
+      args.push(signWithParams);
+    }
+    else if (certificateFile && certificatePassword) {
+      args.push('--signWithParams');
+      args.push(`/a /f "${path.resolve(certificateFile)}" /p "${certificatePassword}"`);
+    }
   }
 
   if (options.setupIcon) {
