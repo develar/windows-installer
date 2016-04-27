@@ -5,7 +5,7 @@ import * as fsUtils from './fs-utils';
 import archiver from 'archiver';
 import * as fs from 'fs-extra';
 import { Promise } from 'bluebird';
-import { sign as signCallback } from 'signcode';
+import { sign as signCallback } from 'signcode-tf';
 
 const log = require('debug')('electron-windows-installer');
 const sign = Promise.promisify(signCallback);
@@ -75,6 +75,16 @@ export async function createWindowsInstaller(options) {
       metadata.authors = (metadata.author || {}).name || '';
     }
   }
+  
+  const baseSignOptions = options.certificateFile && options.certificatePassword ? Object.assign({
+    cert: options.certificateFile,
+    password: options.certificatePassword,
+    hash: ['sha256'],
+    name: metadata.title,
+    overwrite: true
+  }, options.sign) : null;
+  
+  await signFile(appUpdate, baseSignOptions);
 
   const outputDirectory = path.resolve(options.outputDirectory || 'installer');
   if (options.remoteReleases) {
@@ -93,31 +103,13 @@ export async function createWindowsInstaller(options) {
     await spawn(cmd, args);
   }
 
-  // todo fix Squirrel.windows "Sharing violation on path" (avoid copy, use file directly)
-  const squirrelWorkaroundDir = path.join(outputDirectory, '.tmp');
-  await fsUtils.mkdirs(squirrelWorkaroundDir);
-  try {
-    const nupkgPath = path.join(squirrelWorkaroundDir, 'in.nupkg');
-    await pack(metadata, appDirectory, nupkgPath);
-    await releasify(nupkgPath, outputDirectory, options, vendorPath);
-  }
-  finally {
-    await fsUtils.remove(squirrelWorkaroundDir);
-  }
+  await fsUtils.mkdirs(outputDirectory);
+  const nupkgPath = path.join(outputDirectory, 'in.nupkg');
+  await pack(metadata, appDirectory, nupkgPath);
+  await releasify(nupkgPath, outputDirectory, options, vendorPath);
 
   const unfixedSetupPath = path.join(outputDirectory, 'Setup.exe');
-  if (process.platform === 'darwin' && options.certificateFile && options.certificatePassword) {
-    await sign(Object.assign({
-      cert: options.certificateFile,
-      password: options.certificatePassword,
-      hash: ['sha256'],
-      name: metadata.title,
-      overwrite: true
-    }, options.sign, {
-      path: unfixedSetupPath
-    }));
-  }
-
+  await Promise.all([fsUtils.remove(nupkgPath), signFile(unfixedSetupPath, baseSignOptions)]);
   if (options.fixUpPaths !== false) {
     log('Fixing up paths');
 
@@ -135,6 +127,14 @@ export async function createWindowsInstaller(options) {
         await fsUtils.rename(unfixedMsiPath, msiPath);
       }
     }
+  }
+}
+
+async function signFile(file, baseSignOptions) {
+  if (process.platform === 'darwin' && baseSignOptions != null) {
+    const signOptions = Object.assign({}, baseSignOptions);
+    signOptions.path = file;
+    await sign(signOptions);
   }
 }
 
