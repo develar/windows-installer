@@ -1,6 +1,6 @@
 {
   "name": "electron-winstaller-fixed",
-  "version": "2.4.0-beta.0",
+  "version": "2.4.0-beta.1",
   "description": "Module to generate Windows installers for Electron apps",
   "main": "./lib/index.js",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "asar": "~0.11.0",
     "bluebird": "^3.3.5",
     "debug": "^2.2.0",
-    "fs-extra": "^0.28.0",
+    "fs-extra": "^0.30.0",
     "signcode-tf": "^0.5.0"
   },
   "devDependencies": {
@@ -32,7 +32,7 @@
     "babel-preset-es2015-node4": "^2.1.0",
     "babel-preset-stage-0": "^6.5.0",
     "babel-register": "^6.7.2",
-    "eslint": "^2.8.0",
+    "eslint": "^2.9.0",
     "temp": "^0.8.3"
   },
   "engines": {
