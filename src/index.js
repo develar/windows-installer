@@ -189,6 +189,9 @@ function pack(metadata, appDirectory, outFile) {
   <Default ContentType="application/octet" Extension="exe"/>
   <Default ContentType="application/octet" Extension="dat"/>
   <Default ContentType="application/vnd.openxmlformats-package.core-properties+xml" Extension="psmdcp"/>
+  <Default Extension="diff" ContentType="application/octet" />
+  <Default Extension="bsdiff" ContentType="application/octet" />
+  <Default Extension="shasum" ContentType="text/plain" />
 </Types>`, {name: '[Content_Types].xml'});
 
     archive.append(`<?xml version="1.0"?>
