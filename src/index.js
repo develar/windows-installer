@@ -79,7 +79,6 @@ export async function createWindowsInstaller(options) {
   const baseSignOptions = options.certificateFile && options.certificatePassword ? Object.assign({
     cert: options.certificateFile,
     password: options.certificatePassword,
-    hash: ['sha256'],
     name: metadata.title,
     overwrite: true
   }, options.sign) : null;
@@ -109,7 +108,12 @@ export async function createWindowsInstaller(options) {
   await releasify(nupkgPath, outputDirectory, options, vendorPath);
 
   const unfixedSetupPath = path.join(outputDirectory, 'Setup.exe');
-  await Promise.all([fsUtils.remove(nupkgPath), signFile(unfixedSetupPath, baseSignOptions)]);
+  const promises = [fsUtils.remove(nupkgPath), signFile(unfixedSetupPath, baseSignOptions)];
+  if (process.platform === 'win32' && options.noMsi !== true) {
+    promises.push(signFile(path.join(outputDirectory, 'Setup.msi'), baseSignOptions));
+  }
+  await Promise.all(promises);
+
   if (options.fixUpPaths !== false) {
     log('Fixing up paths');
 
@@ -131,7 +135,7 @@ export async function createWindowsInstaller(options) {
 }
 
 async function signFile(file, baseSignOptions) {
-  if (process.platform === 'darwin' && baseSignOptions != null) {
+  if (baseSignOptions != null && process.platform !== 'linux') {
     const signOptions = Object.assign({}, baseSignOptions);
     signOptions.path = file;
     await sign(signOptions);
@@ -221,18 +225,6 @@ async function releasify(nupkgPath, outputDirectory, options, vendorPath) {
 
   if (!isWindows) {
     args.unshift(path.join(vendorPath, 'Update-Mono.exe'));
-  }
-
-  const {certificateFile, certificatePassword, signWithParams} = options;
-  if (isWindows) {
-    if (signWithParams) {
-      args.push('--signWithParams');
-      args.push(signWithParams);
-    }
-    else if (certificateFile && certificatePassword) {
-      args.push('--signWithParams');
-      args.push(`/a /f "${path.resolve(certificateFile)}" /p "${certificatePassword}"`);
-    }
   }
 
   if (options.setupIcon) {
