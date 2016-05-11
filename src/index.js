@@ -103,8 +103,9 @@ export async function createWindowsInstaller(options) {
   }
 
   await fsUtils.mkdirs(outputDirectory);
-  const nupkgPath = path.join(outputDirectory, 'in.nupkg');
-  await pack(metadata, appDirectory, nupkgPath);
+  const version = convertVersion(metadata.version);
+  const nupkgPath = path.join(outputDirectory, `in-${version}.nupkg`);
+  await pack(metadata, appDirectory, nupkgPath, version);
   await releasify(nupkgPath, outputDirectory, options, vendorPath);
 
   const unfixedSetupPath = path.join(outputDirectory, 'Setup.exe');
@@ -142,7 +143,7 @@ async function signFile(file, baseSignOptions) {
   }
 }
 
-function pack(metadata, appDirectory, outFile) {
+function pack(metadata, appDirectory, outFile, version) {
   return new Promise(function (resolve, reject) {
     const archive = archiver('zip', {store: true});
     const out = fs.createWriteStream(outFile);
@@ -163,7 +164,6 @@ function pack(metadata, appDirectory, outFile) {
     const author = metadata.authors || metadata.owners;
     const copyright = metadata.copyright ||
                       `Copyright © ${new Date().getFullYear()} ${author}`;
-    const version = convertVersion(metadata.version);
     const nuspecContent = `<?xml version="1.0"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
   <metadata>
