@@ -10,12 +10,12 @@ const d = require('debug')('electron-windows-installer');
 //
 // Returns an {Observable} with a single value, that is the output of the
 // spawned process
-export default function spawn(exe, params) {
+export default function spawn(exe, params, options) {
   return new Promise((resolve, reject) => {
     d(`Spawning ${exe} ${params.join(' ')}`);
-    const proc = spawnOg(exe, params, {
+    const proc = spawnOg(exe, params, Object.assign({
       stdio: d.enabled ? 'inherit' : ['ignore', 'ignore', 'inherit']
-    });
+    }, options));
 
     proc.on('error', reject);
     proc.on('close', (code) => {

@@ -9,14 +9,12 @@ export const readDir = Promise.promisify(fs.readdir);
 export const unlink = Promise.promisify(fs.unlink);
 export const rename = Promise.promisify(fs.rename);
 export const mkdirs = Promise.promisify(fs.mkdirs);
-export const remove = Promise.promisify(fs.remove);
+export const outputFile = Promise.promisify(fs.outputFile);
 
 const inspect = Promise.promisify(fs.stat);
 export async function fileExists(file) {
-  let stats;
-
   try {
-    stats = await inspect(file);
+    const stats = await inspect(file);
     return stats.isFile();
   } catch(err) {
     log(err);
