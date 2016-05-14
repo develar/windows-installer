@@ -1,9 +1,10 @@
 import spawn from './spawn-promise';
 import asar from 'asar';
 import path from 'path';
-import { outputFile, fileExists, readFile, copy, mkdirs, rename } from './fs-utils';
 import { Promise } from 'bluebird';
-import { sign as signCallback } from 'signcode-tf';
+import { sign as signCallback } from 'signcode-tf'
+import archiver from 'archiver'
+import { stat, outputFile, readFile, copy, mkdirs, rename, remove, createWriteStream } from 'fs-extra-p'
 
 const rcedit = Promise.promisify(require('rcedit'));
 const log = require('debug')('electron-windows-installer');
@@ -18,6 +19,16 @@ export function convertVersion(version) {
   } else {
     return mainVersion;
   }
+}
+
+export async function fileExists(file) {
+  try {
+    return (await stat(file)).isFile()
+  } catch(err) {
+    log(err);
+  }
+
+  return false;
 }
 
 async function computeMetadata(options) {
@@ -54,116 +65,122 @@ async function computeMetadata(options) {
   return metadata;
 }
 
-async function syncReleases(vendorPath, outputDirectory, options) {
-  let cmd = path.join(vendorPath, 'SyncReleases.exe');
-  let args = ['-u', options.remoteReleases, '-r', outputDirectory];
-
-  if (process.platform !== 'win32') {
-    args.unshift(cmd);
-    cmd = 'mono';
-  }
-
+function syncReleases(outputDirectory, options) {
+  const args = prepareArgs(['-u', options.remoteReleases, '-r', outputDirectory], vendor('SyncReleases.exe'))
   if (options.remoteToken) {
-    args.push('-t', options.remoteToken);
+    args.push('-t', options.remoteToken)
   }
-
-  await spawn(cmd, args);
+  return spawn(process.platform === 'win32' ? vendor('SyncReleases.exe') : 'mono', args)
 }
 
-async function copyUpdateExe(vendorPath, appUpdate, options, rcEditOptions, baseSignOptions) {
-  await copy(path.join(vendorPath, 'Update.exe'), appUpdate);
+async function copyUpdateExe(appUpdate, options, rcEditOptions, baseSignOptions) {
+  await copy(vendor('Update.exe'), appUpdate)
   if (options.setupIcon && (options.skipUpdateIcon !== true)) {
-    await rcedit(appUpdate, rcEditOptions);
+    await rcedit(appUpdate, rcEditOptions)
   }
-  await signFile(appUpdate, baseSignOptions);
+  await signFile(appUpdate, baseSignOptions)
 }
 
 export async function createWindowsInstaller(options) {
-  const vendorPath = path.join(__dirname, '..', 'vendor');
-  const appUpdate = path.join(options.appDirectory, 'Update.exe');
-
-  const metadata = await computeMetadata(options);
   const rcEditOptions = Object.assign({}, options.rcedit, {
     icon: options.setupIcon
-  });
-
-  const rcVersionString = rcEditOptions['version-string'];
+  })
+  const rcVersionString = rcEditOptions['version-string']
   if (rcVersionString != null && rcVersionString.LegalCopyright != null) {
     // rcedit cannot set © symbol (or windows bug?), replace to safe
     rcVersionString.LegalCopyright = rcVersionString.LegalCopyright.replace('©', '(C)');
   }
 
+  const metadata = await computeMetadata(options)
   const baseSignOptions = options.certificateFile && options.certificatePassword ? Object.assign({
     cert: options.certificateFile,
     password: options.certificatePassword,
     name: metadata.title,
     overwrite: true
-  }, options.sign) : null;
+  }, options.sign) : null
 
-  const outputDirectory = path.resolve(options.outputDirectory || 'installer');
-  let promises = [
-    copyUpdateExe(vendorPath, appUpdate, options, rcEditOptions, baseSignOptions),
+  const appUpdate = path.join(options.appDirectory, 'Update.exe')
+  const outputDirectory = path.resolve(options.outputDirectory || 'installer')
+  const promises = [
+    copyUpdateExe(appUpdate, options, rcEditOptions, baseSignOptions),
     mkdirs(outputDirectory)
   ];
   if (options.remoteReleases) {
-    promises.push(syncReleases(vendorPath, outputDirectory, options));
+    promises.push(syncReleases(outputDirectory, options));
   }
+  await Promise.all(promises)
 
-  await Promise.all(promises);
-  const version = convertVersion(metadata.version);
-  const nupkgPath = path.join(outputDirectory, `${metadata.name}-${version}-full.nupkg`);
+  const embeddedArchiveFile = path.join(outputDirectory, 'setup.zip')
+  const embeddedArchive = archiver('zip', {zlib: { level: 9}})
+  const embeddedArchiveOut = createWriteStream(embeddedArchiveFile)
+  const embeddedArchivePromise = new Promise(function (resolve, reject) {
+    embeddedArchive.on('error', reject)
+    embeddedArchiveOut.on('close', resolve)
+  })
+  embeddedArchive.pipe(embeddedArchiveOut)
+
+  embeddedArchive.file(appUpdate, {name: 'Update.exe'})
+  embeddedArchive.file(options.loadingGif ? path.resolve(options.loadingGif) : path.join(__dirname, '..', 'resources', 'install-spinner.gif'), {name: 'background.gif'})
+
+  const version = convertVersion(metadata.version)
+  const packageName = `${metadata.name}-${version}-full.nupkg`
+  const nupkgPath = path.join(outputDirectory, packageName)
+  const setupPath = path.join(outputDirectory, options.setupExe || `${metadata.name || metadata.productName}Setup.exe`)
+
   // currently, client move app to lib/net45
-  await pack(metadata, path.dirname(path.dirname(options.appDirectory)), nupkgPath, version);
-  await releasify(nupkgPath, outputDirectory, options, vendorPath);
+  await Promise.all([
+    pack(metadata, path.dirname(path.dirname(options.appDirectory)), nupkgPath, version),
+    copy(vendor('Setup.exe'), setupPath),
+  ])
 
-  const setupPath = path.join(outputDirectory, 'Setup.exe');
+  embeddedArchive.file(nupkgPath, {name: packageName})
 
-  await rcedit(setupPath, rcEditOptions);
+  await releasify(nupkgPath, outputDirectory)
 
-  promises = [signFile(setupPath, baseSignOptions)];
-  if (process.platform === 'win32' && options.noMsi !== true) {
-    promises.push(signFile(path.join(outputDirectory, 'Setup.msi'), baseSignOptions));
-  }
-  await Promise.all(promises);
+  const embeddedReleasesFile = path.join(outputDirectory, 'latestRelease')
+  embeddedArchive.file(embeddedReleasesFile, {name: 'RELEASES'})
+  embeddedArchive.finalize()
+  await embeddedArchivePromise
 
-  if (options.fixUpPaths !== false) {
-    log('Fixing up paths');
+  await writeZipToSetup(setupPath, embeddedArchiveFile)
+  await Promise.all([
+    rcedit(setupPath, rcEditOptions),
+    remove(embeddedReleasesFile),
+    remove(embeddedArchiveFile)
+  ])
 
-    if (metadata.productName || options.setupExe) {
-      const newSetupPath = path.join(outputDirectory, options.setupExe || `${metadata.productName}Setup.exe`);
-      log(`Renaming ${setupPath} => ${newSetupPath}`);
-      await rename(setupPath, newSetupPath);
-    }
-
-    if (metadata.productName) {
-      const msiPath = path.join(outputDirectory, `${metadata.productName}Setup.msi`);
-      const unfixedMsiPath = path.join(outputDirectory, 'Setup.msi');
-      if (await fileExists(unfixedMsiPath)) {
-        log(`Renaming ${unfixedMsiPath} => ${msiPath}`);
-        await rename(unfixedMsiPath, msiPath);
-      }
+  await signFile(setupPath, baseSignOptions)
+  if (options.msi && process.platform === 'win32') {
+    await msi(nupkgPath, setupPath)
+    await signFile(path.join(outputDirectory, 'Setup.msi'), baseSignOptions)
+    if (options.fixUpPaths !== false && metadata.productName) {
+      await rename(path.join(outputDirectory, 'Setup.msi'), path.join(outputDirectory, `${metadata.productName}Setup.msi`))
     }
   }
 }
 
-async function signFile(file, baseSignOptions) {
+function signFile(file, baseSignOptions) {
   if (baseSignOptions != null && process.platform !== 'linux') {
     const signOptions = Object.assign({}, baseSignOptions);
     signOptions.path = file;
-    await sign(signOptions);
+    return sign(signOptions);
   }
+  return Promise.resolve()
+}
+
+function outputFileCrlf(file, data) {
+  return outputFile(file, data.replace(/\n/, '\r\n'))
 }
 
 async function pack(metadata, directory, outFile, version) {
-  const author = metadata.authors || metadata.owners;
-  const copyright = metadata.copyright ||
-                    `Copyright © ${new Date().getFullYear()} ${author}`;
+  const author = metadata.authors || metadata.owners
+  const copyright = metadata.copyright || `Copyright © ${new Date().getFullYear()} ${author}`
   const nuspecContent = `<?xml version="1.0"?>
 <package xmlns="http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd">
   <metadata>
     <id>${metadata.name}</id>
-    <title>${metadata.title}</title>
     <version>${version}</version>
+    <title>${metadata.title}</title>
     <authors>${author}</authors>
     <owners>${metadata.owners || metadata.authors}</owners>
     <iconUrl>${metadata.iconUrl}</iconUrl>
@@ -172,70 +189,79 @@ async function pack(metadata, directory, outFile, version) {
     <copyright>${copyright}</copyright>${metadata.extraMetadataSpecs || ''}
   </metadata>
 </package>`;
-  log(`Created NuSpec file:\n${nuspecContent}`);
+  log(`Created NuSpec file:\n${nuspecContent}`)
 
   await Promise.all([
-    outputFile(path.join(directory, '_rels', '.rels'), `<?xml version="1.0"?>
+    outputFileCrlf(path.join(directory, '_rels', '.rels'), `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-<Relationship Id="Re0" Target="/${metadata.name}.nuspec" Type="http://schemas.microsoft.com/packaging/2010/07/manifest"/>
-<Relationship Id="Re1" Target="/package/services/metadata/core-properties/1.psmdcp" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"/>
+  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="/${metadata.name}.nuspec" Id="Re0" />
+  <Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="/package/services/metadata/core-properties/1.psmdcp" Id="Re1" />
 </Relationships>`),
-    outputFile(path.join(directory, metadata.name + '.nuspec'), nuspecContent),
-    outputFile(path.join(directory, '[Content_Types].xml'), `<?xml version="1.0"?>
+
+    outputFileCrlf(path.join(directory, metadata.name + '.nuspec'), nuspecContent),
+    outputFileCrlf(path.join(directory, '[Content_Types].xml'), `<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/>
-  <Default ContentType="application/octet" Extension="nuspec"/>
-  <Default ContentType="application/octet" Extension="pak"/>
-  <Default ContentType="application/octet" Extension="asar"/>
-  <Default ContentType="application/octet" Extension="bin"/>
-  <Default ContentType="application/octet" Extension="dll"/>
-  <Default ContentType="application/octet" Extension="exe"/>
-  <Default ContentType="application/octet" Extension="dat"/>
-  <Default ContentType="application/vnd.openxmlformats-package.core-properties+xml" Extension="psmdcp"/>
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />
+  <Default Extension="nuspec" ContentType="application/octet" />
+  <Default Extension="pak" ContentType="application/octet" />
+  <Default Extension="asar" ContentType="application/octet" />
+  <Default Extension="bin" ContentType="application/octet" />
+  <Default Extension="dll" ContentType="application/octet" />
+  <Default Extension="exe" ContentType="application/octet" />
+  <Default Extension="dat" ContentType="application/octet" />
+  <Default Extension="psmdcp" ContentType="application/vnd.openxmlformats-package.core-properties+xml" />
+  <Override PartName="/lib/net45/LICENSE" ContentType="application/octet" />
   <Default Extension="diff" ContentType="application/octet" />
   <Default Extension="bsdiff" ContentType="application/octet" />
   <Default Extension="shasum" ContentType="text/plain" />
 </Types>`),
-    outputFile(path.join(directory, 'package', 'services', 'metadata', 'core-properties', '1.psmdcp'), `<?xml version="1.0"?>
+
+    outputFileCrlf(path.join(directory, 'package', 'services', 'metadata', 'core-properties', '1.psmdcp'), `<?xml version="1.0" encoding="utf-8"?>
 <coreProperties xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                 xmlns="http://schemas.openxmlformats.org/package/2006/metadata/core-properties">
   <dc:creator>${author}</dc:creator>
   <dc:description>${metadata.description}</dc:description>
   <dc:identifier>${metadata.name}</dc:identifier>
-  <keywords/>
-  <lastModifiedBy>NuGet, Version=3.4.0.653, Culture=neutral, PublicKeyToken=31bf3856ad364e35;Unix 15.4.0.0;.NET Framework 4.5</lastModifiedBy>
-  <dc:title>${metadata.title}</dc:title>
   <version>${version}</version>
+  <keywords/>
+  <dc:title>${metadata.title}</dc:title>
+  <lastModifiedBy>NuGet, Version=2.8.50926.602, Culture=neutral, PublicKeyToken=null;Microsoft Windows NT 6.2.9200.0;.NET Framework 4</lastModifiedBy>
 </coreProperties>`)
   ]);
 
-  const spawnOptions = {
+  await spawn(process.platform === 'win32' ? vendor(`zip-${process.arch}.exe`) : 'zip', ['-rqD9', outFile, '.'], {
     cwd: directory
-  }
-  if (process.platform === 'win32') {
-    await spawn('powershell.exe', ['-nologo', '-noprofile', '-command', `& { Add-Type -A 'System.IO.Compression.FileSystem'; [IO.Compression.ZipFile]::CreateFromDirectory('.', '${outFile}'); }`], spawnOptions)
-  }
-  else {
-    await spawn('zip', ['-rqD9', outFile, '.'], spawnOptions)
-  }
+  })
 }
 
-async function releasify(nupkgPath, outputDirectory, options, vendorPath) {
-  const isWindows = process.platform === 'win32';
-  const cmd = isWindows ? path.join(vendorPath, 'Update.com') : 'mono';
+function releasify(nupkgPath, outputDirectory) {
   const args = [
     '--releasify', nupkgPath,
-    '--releaseDir', outputDirectory,
-    '--loadingGif', options.loadingGif ? path.resolve(options.loadingGif) : path.join(__dirname, '..', 'resources', 'install-spinner.gif')
-  ];
+    '--releaseDir', outputDirectory
+  ]
+  return spawn(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))
+}
 
-  if (!isWindows) {
-    args.unshift(path.join(vendorPath, 'Update-Mono.exe'));
+function msi(nupkgPath, setupPath) {
+  const args = [
+    '--createMsi', nupkgPath,
+    '--bootstrapperExe', setupPath
+  ]
+  return spawn(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))
+}
+
+function writeZipToSetup(setupExe, zipFile) {
+  const exePath = vendor('WriteZipToSetup.exe')
+  return spawn(process.platform === 'win32' ? exePath : 'wine', prepareArgs([setupExe, zipFile], exePath))
+}
+
+function prepareArgs(args, exePath) {
+  if (process.platform !== 'win32') {
+    args.unshift(exePath)
   }
+  return args
+}
 
-  if (options.noMsi) {
-    args.push('--no-msi');
-  }
-
-  await spawn(cmd, args);
+function vendor(executable) {
+  return path.join(__dirname, '..', 'vendor', executable)
 }
