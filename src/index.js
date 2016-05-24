@@ -4,7 +4,8 @@ import path from 'path';
 import { Promise } from 'bluebird';
 import { sign as signCallback } from 'signcode-tf'
 import archiver from 'archiver'
-import { stat, outputFile, readFile, copy, mkdirs, rename, remove, createWriteStream } from 'fs-extra-p'
+import { stat, readFile, copy, mkdirs, rename, remove, createWriteStream } from 'fs-extra-p'
+import archiverUtil from 'archiver-utils'
 
 const rcedit = Promise.promisify(require('rcedit'));
 const log = require('debug')('electron-windows-installer');
@@ -111,7 +112,7 @@ export async function createWindowsInstaller(options) {
   await Promise.all(promises)
 
   const embeddedArchiveFile = path.join(outputDirectory, 'setup.zip')
-  const embeddedArchive = archiver('zip', {zlib: { level: 9}})
+  const embeddedArchive = archiver('zip')
   const embeddedArchiveOut = createWriteStream(embeddedArchiveFile)
   const embeddedArchivePromise = new Promise(function (resolve, reject) {
     embeddedArchive.on('error', reject)
@@ -127,9 +128,8 @@ export async function createWindowsInstaller(options) {
   const nupkgPath = path.join(outputDirectory, packageName)
   const setupPath = path.join(outputDirectory, options.setupExe || `${metadata.name || metadata.productName}Setup.exe`)
 
-  // currently, client move app to lib/net45
   await Promise.all([
-    pack(metadata, path.dirname(path.dirname(options.appDirectory)), nupkgPath, version),
+    pack(metadata, options.appDirectory, nupkgPath, version, options.packageCompressionLevel),
     copy(vendor('Setup.exe'), setupPath),
   ])
 
@@ -168,11 +168,16 @@ function signFile(file, baseSignOptions) {
   return Promise.resolve()
 }
 
-function outputFileCrlf(file, data) {
-  return outputFile(file, data.replace(/\n/, '\r\n'))
-}
+async function pack(metadata, directory, outFile, version, packageCompressionLevel) {
+  const archive = archiver('zip', {zlib: {level: packageCompressionLevel || 9}})
+  // const archiveOut = createWriteStream('/Users/develar/test.zip')
+  const archiveOut = createWriteStream(outFile)
+  const archivePromise = new Promise(function (resolve, reject) {
+    archive.on('error', reject)
+    archiveOut.on('close', resolve)
+  })
+  archive.pipe(archiveOut)
 
-async function pack(metadata, directory, outFile, version) {
   const author = metadata.authors || metadata.owners
   const copyright = metadata.copyright || `Copyright © ${new Date().getFullYear()} ${author}`
   const nuspecContent = `<?xml version="1.0"?>
@@ -190,16 +195,15 @@ async function pack(metadata, directory, outFile, version) {
   </metadata>
 </package>`;
   log(`Created NuSpec file:\n${nuspecContent}`)
+  archive.append(nuspecContent.replace(/\n/, '\r\n'), {name: `${encodeURI(metadata.name).replace(/%5B/g, '[').replace(/%5D/g, ']')}.nuspec`})
 
-  await Promise.all([
-    outputFileCrlf(path.join(directory, '_rels', '.rels'), `<?xml version="1.0" encoding="utf-8"?>
+  archive.append(`<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="/${metadata.name}.nuspec" Id="Re0" />
   <Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="/package/services/metadata/core-properties/1.psmdcp" Id="Re1" />
-</Relationships>`),
+</Relationships>`.replace(/\n/, '\r\n'), {name: '.rels', prefix: '_rels'})
 
-    outputFileCrlf(path.join(directory, metadata.name + '.nuspec'), nuspecContent),
-    outputFileCrlf(path.join(directory, '[Content_Types].xml'), `<?xml version="1.0" encoding="utf-8"?>
+  archive.append(`<?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml" />
   <Default Extension="nuspec" ContentType="application/octet" />
@@ -214,9 +218,9 @@ async function pack(metadata, directory, outFile, version) {
   <Default Extension="diff" ContentType="application/octet" />
   <Default Extension="bsdiff" ContentType="application/octet" />
   <Default Extension="shasum" ContentType="text/plain" />
-</Types>`),
+</Types>`.replace(/\n/, '\r\n'), {name: '[Content_Types].xml'})
 
-    outputFileCrlf(path.join(directory, 'package', 'services', 'metadata', 'core-properties', '1.psmdcp'), `<?xml version="1.0" encoding="utf-8"?>
+  archive.append(`<?xml version="1.0" encoding="utf-8"?>
 <coreProperties xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                 xmlns="http://schemas.openxmlformats.org/package/2006/metadata/core-properties">
   <dc:creator>${author}</dc:creator>
@@ -226,12 +230,10 @@ async function pack(metadata, directory, outFile, version) {
   <keywords/>
   <dc:title>${metadata.title}</dc:title>
   <lastModifiedBy>NuGet, Version=2.8.50926.602, Culture=neutral, PublicKeyToken=null;Microsoft Windows NT 6.2.9200.0;.NET Framework 4</lastModifiedBy>
-</coreProperties>`)
-  ]);
+</coreProperties>`.replace(/\n/, '\r\n'), {name: '1.psmdcp', prefix: 'package/services/metadata/core-properties'})
 
-  await spawn(process.platform === 'win32' ? vendor(`zip-${process.arch}.exe`) : 'zip', ['-rqD9', outFile, '.'], {
-    cwd: directory
-  })
+  encodedZip(archive, directory, 'lib/net45')
+  await archivePromise
 }
 
 function releasify(nupkgPath, outputDirectory) {
@@ -264,4 +266,29 @@ function prepareArgs(args, exePath) {
 
 function vendor(executable) {
   return path.join(__dirname, '..', 'vendor', executable)
+}
+
+function encodedZip(archive, dir, prefix) {
+  archiverUtil.walkdir(dir, function (error, files) {
+    if (error) {
+      archive.emit('error', error)
+      return
+    }
+
+    for (let file of files) {
+      if (file.stats.isDirectory()) {
+        continue
+      }
+
+      // GBK file name encoding (or Non-English file name) caused a problem
+      const entryData = {
+        name: encodeURI(file.relative.replace(/\\/g, '/')).replace(/%5B/g, '[').replace(/%5D/g, ']'),
+        prefix: prefix,
+        stats: file.stats,
+      }
+      archive._append(file.path, entryData)
+    }
+
+    archive.finalize()
+  })
 }
