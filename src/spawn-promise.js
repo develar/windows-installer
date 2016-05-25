@@ -1,7 +1,7 @@
 import { Promise } from 'bluebird';
-import { spawn as spawnOg } from 'child_process';
+import { spawn as spawnOg, execFile } from 'child_process';
 
-const d = require('debug')('electron-windows-installer');
+const debug = require('debug')('electron-windows-installer');
 
 // Public: Maps a process's output into an {Observable}
 //
@@ -10,11 +10,11 @@ const d = require('debug')('electron-windows-installer');
 //
 // Returns an {Observable} with a single value, that is the output of the
 // spawned process
-export default function spawn(exe, params, options) {
+export function spawn(exe, params, options) {
   return new Promise((resolve, reject) => {
-    d(`Spawning ${exe} ${params.join(' ')}`);
+    debug(`Spawning ${exe} ${params.join(' ')}`);
     const proc = spawnOg(exe, params, Object.assign({
-      stdio: d.enabled ? 'inherit' : ['ignore', 'ignore', 'inherit']
+      stdio: debug.enabled ? 'inherit' : ['ignore', 'ignore', 'inherit']
     }, options));
 
     proc.on('error', reject);
@@ -26,4 +26,29 @@ export default function spawn(exe, params, options) {
       }
     });
   });
+}
+
+export function exec(file, args) {
+  if (debug.enabled) {
+    debug(`Executing ${file} ${args == null ? '' : args.join(' ')}`)
+  }
+
+  return new Promise((resolve, reject) => {
+    execFile(file, args, function (error, stdout, stderr) {
+      if (error == null) {
+        resolve(stdout)
+      }
+      else {
+        if (stdout.length !== 0) {
+          console.log(stdout)
+        }
+        if (stderr.length === 0) {
+          reject(error)
+        }
+        else {
+          reject(new Error(stderr + '\n' + error))
+        }
+      }
+    })
+  })
 }

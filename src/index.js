@@ -1,4 +1,4 @@
-import spawn from './spawn-promise';
+import { spawn, exec } from './spawn-promise'
 import asar from 'asar';
 import path from 'path';
 import { Promise } from 'bluebird';
@@ -135,17 +135,15 @@ export async function createWindowsInstaller(options) {
 
   embeddedArchive.file(nupkgPath, {name: packageName})
 
-  await releasify(nupkgPath, outputDirectory)
+  const releaseEntry = await releasify(nupkgPath, outputDirectory)
 
-  const embeddedReleasesFile = path.join(outputDirectory, 'latestRelease')
-  embeddedArchive.file(embeddedReleasesFile, {name: 'RELEASES'})
+  embeddedArchive.append(releaseEntry, {name: 'RELEASES'})
   embeddedArchive.finalize()
   await embeddedArchivePromise
 
   await writeZipToSetup(setupPath, embeddedArchiveFile)
   await Promise.all([
     rcedit(setupPath, rcEditOptions),
-    remove(embeddedReleasesFile),
     remove(embeddedArchiveFile)
   ])
 
@@ -236,12 +234,17 @@ async function pack(metadata, directory, outFile, version, packageCompressionLev
   await archivePromise
 }
 
-function releasify(nupkgPath, outputDirectory) {
+async function releasify(nupkgPath, outputDirectory) {
   const args = [
     '--releasify', nupkgPath,
     '--releaseDir', outputDirectory
   ]
-  return spawn(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))
+  const out = (await exec(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))).trim()
+  const last = out.lastIndexOf('\n')
+  if (last > 0) {
+    console.log(out.substring(0, last + 1))
+  }
+  return last > 0 ? out.substring(last + 1) : out
 }
 
 function msi(nupkgPath, setupPath) {
@@ -254,7 +257,7 @@ function msi(nupkgPath, setupPath) {
 
 function writeZipToSetup(setupExe, zipFile) {
   const exePath = vendor('WriteZipToSetup.exe')
-  return spawn(process.platform === 'win32' ? exePath : 'wine', prepareArgs([setupExe, zipFile], exePath))
+  return exec(process.platform === 'win32' ? exePath : 'wine', prepareArgs([setupExe, zipFile], exePath))
 }
 
 function prepareArgs(args, exePath) {
