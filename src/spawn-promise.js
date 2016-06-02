@@ -34,7 +34,7 @@ export function exec(file, args) {
   }
 
   return new Promise((resolve, reject) => {
-    execFile(file, args, function (error, stdout, stderr) {
+    execFile(file, args, {maxBuffer: 4 * 1024000}, function (error, stdout, stderr) {
       if (error == null) {
         resolve(stdout)
       }

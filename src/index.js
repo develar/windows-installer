@@ -167,7 +167,7 @@ function signFile(file, baseSignOptions) {
 }
 
 async function pack(metadata, directory, outFile, version, packageCompressionLevel) {
-  const archive = archiver('zip', {zlib: {level: packageCompressionLevel || 9}})
+  const archive = archiver('zip', {zlib: {level: packageCompressionLevel == null ? 9 : packageCompressionLevel}})
   // const archiveOut = createWriteStream('/Users/develar/test.zip')
   const archiveOut = createWriteStream(outFile)
   const archivePromise = new Promise(function (resolve, reject) {
