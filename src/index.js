@@ -4,8 +4,9 @@ import path from 'path';
 import { Promise } from 'bluebird';
 import { sign as signCallback } from 'signcode-tf'
 import archiver from 'archiver'
-import { stat, readFile, copy, mkdirs, rename, remove, createWriteStream } from 'fs-extra-p'
+import { emptyDir, stat, readFile, copy, mkdirs, rename, remove, createWriteStream } from 'fs-extra-p'
 import archiverUtil from 'archiver-utils'
+import { tmpdir } from 'os'
 
 const rcedit = Promise.promisify(require('rcedit'));
 const log = require('debug')('electron-windows-installer');
@@ -74,15 +75,31 @@ function syncReleases(outputDirectory, options) {
   return spawn(process.platform === 'win32' ? vendor('SyncReleases.exe') : 'mono', args)
 }
 
-async function copyUpdateExe(appUpdate, options, rcEditOptions, baseSignOptions) {
-  await copy(vendor('Update.exe'), appUpdate)
+async function copyUpdateExe(desitination, options, rcEditOptions, baseSignOptions) {
+  await copy(vendor('Update.exe'), desitination)
   if (options.setupIcon && (options.skipUpdateIcon !== true)) {
-    await rcedit(appUpdate, rcEditOptions)
+    await rcedit(desitination, rcEditOptions)
   }
-  await signFile(appUpdate, baseSignOptions)
+  await signFile(desitination, baseSignOptions)
 }
 
 export async function createWindowsInstaller(options) {
+  const stageDir = path.join(tmpdir(), getTempName('squirrel-windows-builder'))
+  await emptyDir(stageDir)
+  try {
+    await build(options, stageDir)
+  }
+  finally {
+    try {
+      await remove(stageDir)
+    }
+    catch (e) {
+      // ignore
+    }
+  }
+}
+
+async function build(options, stageDir) {
   const rcEditOptions = Object.assign({}, options.rcedit, {
     icon: options.setupIcon
   })
@@ -100,7 +117,7 @@ export async function createWindowsInstaller(options) {
     overwrite: true
   }, options.sign) : null
 
-  const appUpdate = path.join(options.appDirectory, 'Update.exe')
+  const appUpdate = path.join(stageDir, 'Update.exe')
   const outputDirectory = path.resolve(options.outputDirectory || 'installer')
   const promises = [
     copyUpdateExe(appUpdate, options, rcEditOptions, baseSignOptions),
@@ -111,7 +128,7 @@ export async function createWindowsInstaller(options) {
   }
   await Promise.all(promises)
 
-  const embeddedArchiveFile = path.join(outputDirectory, 'setup.zip')
+  const embeddedArchiveFile = path.join(stageDir, 'setup.zip')
   const embeddedArchive = archiver('zip')
   const embeddedArchiveOut = createWriteStream(embeddedArchiveFile)
   const embeddedArchivePromise = new Promise(function (resolve, reject) {
@@ -129,7 +146,7 @@ export async function createWindowsInstaller(options) {
   const setupPath = path.join(outputDirectory, options.setupExe || `${metadata.name || metadata.productName}Setup.exe`)
 
   await Promise.all([
-    pack(metadata, options.appDirectory, nupkgPath, version, options.packageCompressionLevel),
+    pack(metadata, options.appDirectory, appUpdate, nupkgPath, version, options.packageCompressionLevel),
     copy(vendor('Setup.exe'), setupPath),
   ])
 
@@ -142,10 +159,7 @@ export async function createWindowsInstaller(options) {
   await embeddedArchivePromise
 
   await writeZipToSetup(setupPath, embeddedArchiveFile)
-  await Promise.all([
-    rcedit(setupPath, rcEditOptions),
-    remove(embeddedArchiveFile)
-  ])
+  await rcedit(setupPath, rcEditOptions)
 
   await signFile(setupPath, baseSignOptions)
   if (options.msi && process.platform === 'win32') {
@@ -166,7 +180,7 @@ function signFile(file, baseSignOptions) {
   return Promise.resolve()
 }
 
-async function pack(metadata, directory, outFile, version, packageCompressionLevel) {
+async function pack(metadata, directory, updateFile, outFile, version, packageCompressionLevel) {
   const archive = archiver('zip', {zlib: {level: packageCompressionLevel == null ? 9 : packageCompressionLevel}})
   // const archiveOut = createWriteStream('/Users/develar/test.zip')
   const archiveOut = createWriteStream(outFile)
@@ -230,6 +244,7 @@ async function pack(metadata, directory, outFile, version, packageCompressionLev
   <lastModifiedBy>NuGet, Version=2.8.50926.602, Culture=neutral, PublicKeyToken=null;Microsoft Windows NT 6.2.9200.0;.NET Framework 4</lastModifiedBy>
 </coreProperties>`.replace(/\n/, '\r\n'), {name: '1.psmdcp', prefix: 'package/services/metadata/core-properties'})
 
+  archive.file(updateFile, {name: 'Update.exe', prefix: 'lib/net45'})
   encodedZip(archive, directory, 'lib/net45')
   await archivePromise
 }
@@ -294,4 +309,12 @@ function encodedZip(archive, dir, prefix) {
 
     archive.finalize()
   })
+}
+
+let tmpDirCounter = 0
+// add date to avoid use stale temp dir
+const tempDirPrefix = `${process.pid.toString(36)}-${Date.now().toString(36)}`
+
+export function getTempName(prefix) {
+  return `${prefix == null ? '' : prefix + '-'}${tempDirPrefix}-${(tmpDirCounter++).toString(36)}`
 }
