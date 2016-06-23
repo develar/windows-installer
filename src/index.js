@@ -152,7 +152,7 @@ async function build(options, stageDir) {
 
   embeddedArchive.file(nupkgPath, {name: packageName})
 
-  const releaseEntry = await releasify(nupkgPath, outputDirectory)
+  const releaseEntry = await releasify(nupkgPath, outputDirectory, packageName)
 
   embeddedArchive.append(releaseEntry, {name: 'RELEASES'})
   embeddedArchive.finalize()
@@ -247,17 +247,26 @@ async function pack(metadata, directory, updateFile, outFile, version, packageCo
   await archivePromise
 }
 
-async function releasify(nupkgPath, outputDirectory) {
+async function releasify(nupkgPath, outputDirectory, packageName) {
   const args = [
     '--releasify', nupkgPath,
     '--releaseDir', outputDirectory
   ]
   const out = (await exec(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))).trim()
   const last = out.lastIndexOf('\n')
-  if (log.enabled && last > 0) {
-    log(out.substring(0, last + 1))
+  if (log.enabled) {
+    log(out)
   }
-  return last > 0 ? out.substring(last + 1) : out
+
+  const lines = out.split("\n");
+  for (let i = lines.length - 1; i > -1; i--) {
+    const line = lines[i];
+    if (line.indexOf(packageName) != -1) {
+      return line.trim()
+    }
+  }
+
+  throw new Error("Invalid output, cannot find last release entry")
 }
 
 async function msi(nupkgPath, setupPath, outputDirectory, outFile) {
