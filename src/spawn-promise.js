@@ -28,13 +28,13 @@ export function spawn(exe, params, options) {
   });
 }
 
-export function exec(file, args) {
+export function exec(file, args, options) {
   if (debug.enabled) {
     debug(`Executing ${file} ${args == null ? '' : args.join(' ')}`)
   }
 
   return new Promise((resolve, reject) => {
-    execFile(file, args, {maxBuffer: 4 * 1024000}, function (error, stdout, stderr) {
+    execFile(file, args, Object.assign({maxBuffer: 4 * 1024000}, options), function (error, stdout, stderr) {
       if (error == null) {
         resolve(stdout)
       }

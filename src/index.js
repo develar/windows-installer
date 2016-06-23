@@ -4,7 +4,7 @@ import path from 'path';
 import { Promise } from 'bluebird';
 import { sign as signCallback } from 'signcode-tf'
 import archiver from 'archiver'
-import { emptyDir, stat, readFile, copy, mkdirs, rename, remove, createWriteStream } from 'fs-extra-p'
+import { emptyDir, stat, readFile, copy, mkdirs, remove, createWriteStream } from 'fs-extra-p'
 import archiverUtil from 'archiver-utils'
 import { tmpdir } from 'os'
 
@@ -163,11 +163,9 @@ async function build(options, stageDir) {
 
   await signFile(setupPath, baseSignOptions)
   if (options.msi && process.platform === 'win32') {
-    await msi(nupkgPath, setupPath)
-    await signFile(path.join(outputDirectory, 'Setup.msi'), baseSignOptions)
-    if (options.fixUpPaths !== false && metadata.productName) {
-      await rename(path.join(outputDirectory, 'Setup.msi'), path.join(outputDirectory, `${metadata.productName}Setup.msi`))
-    }
+    const outFile = options.msiExe || `${metadata.productName}Setup.msi`;
+    await msi(nupkgPath, setupPath, outputDirectory, outFile)
+    await signFile(path.join(outputDirectory, outFile), baseSignOptions)
   }
 }
 
@@ -256,18 +254,24 @@ async function releasify(nupkgPath, outputDirectory) {
   ]
   const out = (await exec(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))).trim()
   const last = out.lastIndexOf('\n')
-  if (last > 0) {
-    console.log(out.substring(0, last + 1))
+  if (log.enabled && last > 0) {
+    log(out.substring(0, last + 1))
   }
   return last > 0 ? out.substring(last + 1) : out
 }
 
-function msi(nupkgPath, setupPath) {
+async function msi(nupkgPath, setupPath, outputDirectory, outFile) {
   const args = [
     '--createMsi', nupkgPath,
     '--bootstrapperExe', setupPath
   ]
-  return spawn(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))
+  await exec(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))
+  await exec(vendor('candle.exe'), ['-nologo', '-ext', 'WixNetFxExtension', '-out', 'Setup.wixobj', 'Setup.wxs'], {
+    cwd: outputDirectory,
+  })
+  await exec(vendor('light.exe'), ['-ext', 'WixNetFxExtension', '-sval', '-out', outFile, 'Setup.wixobj'], {
+    cwd: outputDirectory,
+  })
 }
 
 function writeZipToSetup(setupExe, zipFile) {

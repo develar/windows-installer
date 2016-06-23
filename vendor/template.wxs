@@ -18,7 +18,7 @@
 
     <DirectoryRef Id="APPLICATIONROOTDIRECTORY">
       <Component Id="{{Id}}.exe" Guid="{{IdAsGuid2}}">
-        <File Id="{{Id}}.exe" Name="{{Id}}.exe" Source="./Setup.exe" KeyPath="yes" />
+        <File Id="{{Id}}.exe" Name="{{Id}}.exe" Source="{{SetupExecutable}}" KeyPath="yes" />
       </Component>
     </DirectoryRef>
 
