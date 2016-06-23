@@ -4,7 +4,7 @@ import path from 'path';
 import { Promise } from 'bluebird';
 import { sign as signCallback } from 'signcode-tf'
 import archiver from 'archiver'
-import { emptyDir, stat, readFile, copy, mkdirs, remove, createWriteStream } from 'fs-extra-p'
+import { emptyDir, stat, readFile, copy, mkdirs, remove, createWriteStream, unlink } from 'fs-extra-p'
 import archiverUtil from 'archiver-utils'
 import { tmpdir } from 'os'
 
@@ -272,6 +272,13 @@ async function msi(nupkgPath, setupPath, outputDirectory, outFile) {
   await exec(vendor('light.exe'), ['-ext', 'WixNetFxExtension', '-sval', '-out', outFile, 'Setup.wixobj'], {
     cwd: outputDirectory,
   })
+
+  //noinspection SpellCheckingInspection
+  await Promise.all([
+    unlink(path.join(outputDirectory, 'Setup.wxs')),
+    unlink(path.join(outputDirectory, 'Setup.wixobj')),
+    unlink(path.join(outputDirectory, outFile.replace('.msi', '.wixpdb'))).catch(e => log(e.toString())),
+  ])
 }
 
 function writeZipToSetup(setupExe, zipFile) {
