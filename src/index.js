@@ -8,7 +8,7 @@ import { emptyDir, stat, readFile, copy, mkdirs, remove, createWriteStream, unli
 import archiverUtil from 'archiver-utils'
 import { tmpdir } from 'os'
 
-const rcedit = Promise.promisify(require('rcedit'));
+const rcedit = Promise.promisify(require('@develar/rcedit'));
 const log = require('debug')('electron-windows-installer');
 const sign = Promise.promisify(signCallback);
 
@@ -253,12 +253,11 @@ async function releasify(nupkgPath, outputDirectory, packageName) {
     '--releaseDir', outputDirectory
   ]
   const out = (await exec(process.platform === 'win32' ? vendor('Update.com') : 'mono', prepareArgs(args, vendor('Update-Mono.exe')))).trim()
-  const last = out.lastIndexOf('\n')
   if (log.enabled) {
     log(out)
   }
 
-  const lines = out.split("\n");
+  const lines = out.split('\n');
   for (let i = lines.length - 1; i > -1; i--) {
     const line = lines[i];
     if (line.indexOf(packageName) != -1) {
@@ -266,7 +265,7 @@ async function releasify(nupkgPath, outputDirectory, packageName) {
     }
   }
 
-  throw new Error("Invalid output, cannot find last release entry")
+  throw new Error('Invalid output, cannot find last release entry')
 }
 
 async function msi(nupkgPath, setupPath, outputDirectory, outFile) {
