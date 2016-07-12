@@ -1,7 +1,7 @@
 import test from 'ava';
 import path from 'path';
-import { readdir } from 'fs-extra-p'
-import { createWindowsInstaller, fileExists } from '../src/index.js';
+import { readdir, stat } from 'fs-extra-p'
+import { createWindowsInstaller } from '../src/index.js';
 import { Promise } from 'bluebird';
 import temp from 'temp';
 
@@ -17,8 +17,13 @@ test('creates a nuget package and installer', async t => {
   const outputDirectory = await createTempDir('ei-');
 
   const options = {
+    title: 'MyApp',
+    name: 'myapp',
     appDirectory: appDirectory,
-    outputDirectory: outputDirectory
+    outputDirectory: outputDirectory,
+    version: '1.0.0',
+    description: 'test',
+    iconUrl: 'https://boo'
   };
 
   await createWindowsInstaller(options);
@@ -26,13 +31,13 @@ test('creates a nuget package and installer', async t => {
   log(`Verifying assertions on ${outputDirectory}`);
   log(JSON.stringify(await readdir(outputDirectory)))
 
-  t.true(await fileExists(path.join(outputDirectory, 'myapp-1.0.0-full.nupkg')));
-  t.true(await fileExists(path.join(outputDirectory, 'MyAppSetup.exe')));
+  t.true((await stat(path.join(outputDirectory, 'myapp-1.0.0-full.nupkg'))).isFile())
+  t.true((await stat(path.join(outputDirectory, 'MyAppSetup.exe'))).isFile())
 
   if (process.platform === 'win32') {
-    t.true(await fileExists(path.join(outputDirectory, 'MyAppSetup.msi')));
+    t.true((await stat(path.join(outputDirectory, 'MyAppSetup.msi'))).isFile())
   }
 
   log('Verifying Update.exe');
-  t.true(await fileExists(path.join(appDirectory, 'Update.exe')));
+  t.true((await stat(path.join(appDirectory, 'Update.exe'))).isFile());
 });

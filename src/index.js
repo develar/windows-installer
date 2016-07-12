@@ -1,14 +1,13 @@
 import { spawn, exec } from './spawn-promise'
-import asar from 'asar';
 import path from 'path';
 import { Promise } from 'bluebird';
 import { sign as signCallback } from 'signcode-tf'
 import archiver from 'archiver'
-import { emptyDir, stat, readFile, copy, mkdirs, remove, createWriteStream, unlink } from 'fs-extra-p'
+import { emptyDir, copy, remove, createWriteStream, unlink } from 'fs-extra-p'
 import archiverUtil from 'archiver-utils'
 import { tmpdir } from 'os'
 
-const rcedit = Promise.promisify(require('@develar/rcedit'));
+const rcedit = Promise.promisify(require('rcedit'));
 const log = require('debug')('electron-windows-installer');
 const sign = Promise.promisify(signCallback);
 
@@ -21,50 +20,6 @@ export function convertVersion(version) {
   } else {
     return mainVersion;
   }
-}
-
-export async function fileExists(file) {
-  try {
-    return (await stat(file)).isFile()
-  } catch(err) {
-    log(err);
-  }
-
-  return false;
-}
-
-async function computeMetadata(options) {
-  const metadata = {
-    description: '',
-    iconUrl: 'https://raw.githubusercontent.com/atom/electron/master/atom/browser/resources/win/atom.ico'
-  };
-
-  if (options.usePackageJson !== false) {
-    const appResources = path.join(options.appDirectory, 'resources');
-    const asarFile = path.join(appResources, 'app.asar');
-    let appMetadata;
-
-    if (await fileExists(asarFile)) {
-      appMetadata = JSON.parse(asar.extractFile(asarFile, 'package.json'));
-    } else {
-      appMetadata = JSON.parse(await readFile(path.join(appResources, 'app', 'package.json'), 'utf8'));
-    }
-
-    Object.assign(metadata, {
-      exe: `${appMetadata.name}.exe`,
-      title: appMetadata.productName || appMetadata.name
-    }, appMetadata);
-  }
-
-  Object.assign(metadata, options);
-  if (metadata.authors == null) {
-    if (typeof(metadata.author) === 'string') {
-      metadata.authors = metadata.author;
-    } else {
-      metadata.authors = (metadata.author || {}).name || '';
-    }
-  }
-  return metadata;
 }
 
 function syncReleases(outputDirectory, options) {
@@ -109,7 +64,7 @@ async function build(options, stageDir) {
     rcVersionString.LegalCopyright = rcVersionString.LegalCopyright.replace('©', '(C)');
   }
 
-  const metadata = await computeMetadata(options)
+  const metadata = options
   const baseSignOptions = options.certificateFile && options.certificatePassword ? Object.assign({
     cert: options.certificateFile,
     password: options.certificatePassword,
@@ -121,8 +76,8 @@ async function build(options, stageDir) {
   const outputDirectory = path.resolve(options.outputDirectory || 'installer')
   const promises = [
     copyUpdateExe(appUpdate, options, rcEditOptions, baseSignOptions),
-    mkdirs(outputDirectory)
-  ];
+    emptyDir(outputDirectory)
+  ]
   if (options.remoteReleases) {
     promises.push(syncReleases(outputDirectory, options));
   }
