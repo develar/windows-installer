@@ -1,7 +1,6 @@
 import { spawn, exec } from './spawn-promise'
 import path from 'path';
 import { Promise } from 'bluebird';
-import { sign as signCallback } from 'signcode-tf'
 import archiver from 'archiver'
 import { emptyDir, copy, remove, createWriteStream, unlink } from 'fs-extra-p'
 import archiverUtil from 'archiver-utils'
@@ -9,7 +8,6 @@ import { tmpdir } from 'os'
 
 const rcedit = Promise.promisify(require('rcedit'));
 const log = require('debug')('electron-windows-installer');
-const sign = Promise.promisify(signCallback);
 
 export function convertVersion(version) {
   const parts = version.split('-');
@@ -30,12 +28,15 @@ function syncReleases(outputDirectory, options) {
   return spawn(process.platform === 'win32' ? vendor('SyncReleases.exe') : 'mono', args)
 }
 
-async function copyUpdateExe(desitination, options, rcEditOptions, baseSignOptions) {
+async function copyUpdateExe(desitination, options, rcEditOptions) {
   await copy(vendor('Update.exe'), desitination)
   if (options.setupIcon && (options.skipUpdateIcon !== true)) {
     await rcedit(desitination, rcEditOptions)
   }
-  await signFile(desitination, baseSignOptions)
+
+  if (options.sign != null) {
+    await options.sign(desitination)
+  }
 }
 
 export async function createWindowsInstaller(options) {
@@ -65,17 +66,10 @@ async function build(options, stageDir) {
   }
 
   const metadata = options
-  const baseSignOptions = options.certificateFile && options.certificatePassword ? Object.assign({
-    cert: options.certificateFile,
-    password: options.certificatePassword,
-    name: metadata.title,
-    overwrite: true
-  }, options.sign) : null
-
   const appUpdate = path.join(stageDir, 'Update.exe')
   const outputDirectory = path.resolve(options.outputDirectory || 'installer')
   const promises = [
-    copyUpdateExe(appUpdate, options, rcEditOptions, baseSignOptions),
+    copyUpdateExe(appUpdate, options, rcEditOptions),
     emptyDir(outputDirectory)
   ]
   if (options.remoteReleases) {
@@ -116,21 +110,16 @@ async function build(options, stageDir) {
   await writeZipToSetup(setupPath, embeddedArchiveFile)
   await rcedit(setupPath, rcEditOptions)
 
-  await signFile(setupPath, baseSignOptions)
+  if (options.sign != null) {
+    await options.sign(setupPath)
+  }
   if (options.msi && process.platform === 'win32') {
     const outFile = options.msiExe || `${metadata.productName}Setup.msi`;
     await msi(nupkgPath, setupPath, outputDirectory, outFile)
-    await signFile(path.join(outputDirectory, outFile), baseSignOptions)
+    if (options.sign != null) {
+      await options.sign(path.join(outputDirectory, outFile))
+    }
   }
-}
-
-function signFile(file, baseSignOptions) {
-  if (baseSignOptions != null && process.platform !== 'linux') {
-    const signOptions = Object.assign({}, baseSignOptions);
-    signOptions.path = file;
-    return sign(signOptions);
-  }
-  return Promise.resolve()
 }
 
 async function pack(metadata, directory, updateFile, outFile, version, packageCompressionLevel) {
