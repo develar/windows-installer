@@ -13,7 +13,7 @@ const log = require('debug')('electron-windows-installer:spec');
 
 const appDirectory = path.join(__dirname, 'fixtures/app');
 
-test('creates a nuget package and installer', async t => {
+test('creates a nuget package and installer', async (t) => {
   const outputDirectory = await createTempDir('ei-');
 
   const options = {
@@ -26,6 +26,10 @@ test('creates a nuget package and installer', async t => {
     iconUrl: 'https://boo'
   };
 
+  if (process.platform === 'win32') {
+    options.msi = true;
+  }
+
   await createWindowsInstaller(options);
 
   log(`Verifying assertions on ${outputDirectory}`);
@@ -37,7 +41,4 @@ test('creates a nuget package and installer', async t => {
   if (process.platform === 'win32') {
     t.true((await stat(path.join(outputDirectory, 'MyAppSetup.msi'))).isFile())
   }
-
-  log('Verifying Update.exe');
-  t.true((await stat(path.join(appDirectory, 'Update.exe'))).isFile());
 });

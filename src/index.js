@@ -28,14 +28,14 @@ function syncReleases(outputDirectory, options) {
   return spawn(process.platform === 'win32' ? vendor('SyncReleases.exe') : 'mono', args)
 }
 
-async function copyUpdateExe(desitination, options, rcEditOptions) {
-  await copy(vendor('Update.exe'), desitination)
+async function copyUpdateExe(destination, options, rcEditOptions) {
+  await copy(vendor('Update.exe'), destination)
   if (options.setupIcon && (options.skipUpdateIcon !== true)) {
-    await rcedit(desitination, rcEditOptions)
+    await rcedit(destination, rcEditOptions)
   }
 
   if (options.sign != null) {
-    await options.sign(desitination)
+    await options.sign(destination)
   }
 }
 
@@ -114,7 +114,7 @@ async function build(options, stageDir) {
     await options.sign(setupPath)
   }
   if (options.msi && process.platform === 'win32') {
-    const outFile = options.msiExe || `${metadata.productName}Setup.msi`;
+    const outFile = options.msiExe || `${metadata.productName || metadata.name}Setup.msi`;
     await msi(nupkgPath, setupPath, outputDirectory, outFile)
     if (options.sign != null) {
       await options.sign(path.join(outputDirectory, outFile))
