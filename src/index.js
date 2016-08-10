@@ -6,7 +6,6 @@ import { emptyDir, copy, remove, createWriteStream, unlink } from 'fs-extra-p'
 import archiverUtil from 'archiver-utils'
 import { tmpdir } from 'os'
 
-const rcedit = Promise.promisify(require('rcedit'));
 const log = require('debug')('electron-windows-installer');
 
 export function convertVersion(version) {
@@ -28,12 +27,8 @@ function syncReleases(outputDirectory, options) {
   return spawn(process.platform === 'win32' ? vendor('SyncReleases.exe') : 'mono', args)
 }
 
-async function copyUpdateExe(destination, options, rcEditOptions) {
+async function copyUpdateExe(destination, options) {
   await copy(vendor('Update.exe'), destination)
-  if (options.setupIcon && (options.skipUpdateIcon !== true)) {
-    await rcedit(destination, rcEditOptions)
-  }
-
   if (options.sign != null) {
     await options.sign(destination)
   }
@@ -56,20 +51,11 @@ export async function createWindowsInstaller(options) {
 }
 
 async function build(options, stageDir) {
-  const rcEditOptions = Object.assign({}, options.rcedit, {
-    icon: options.setupIcon
-  })
-  const rcVersionString = rcEditOptions['version-string']
-  if (rcVersionString != null && rcVersionString.LegalCopyright != null) {
-    // rcedit cannot set © symbol (or windows bug?), replace to safe
-    rcVersionString.LegalCopyright = rcVersionString.LegalCopyright.replace('©', '(C)');
-  }
-
   const metadata = options
   const appUpdate = path.join(stageDir, 'Update.exe')
   const outputDirectory = path.resolve(options.outputDirectory || 'installer')
   const promises = [
-    copyUpdateExe(appUpdate, options, rcEditOptions),
+    copyUpdateExe(appUpdate, options),
     emptyDir(outputDirectory)
   ]
   if (options.remoteReleases) {
@@ -108,8 +94,6 @@ async function build(options, stageDir) {
   await embeddedArchivePromise
 
   await writeZipToSetup(setupPath, embeddedArchiveFile)
-  await rcedit(setupPath, rcEditOptions)
-
   if (options.sign != null) {
     await options.sign(setupPath)
   }
